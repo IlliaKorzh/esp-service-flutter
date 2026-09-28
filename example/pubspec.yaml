@@ -1,0 +1,20 @@
+name: esp_service_example
+description: Example of the esp_service package.
+publish_to: none
+version: 1.0.0
+
+environment:
+  sdk: ">=3.10.0 <4.0.0"
+
+dependencies:
+  esp_service:
+    path: ../
+  firebase_core: ^4.13.0
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
