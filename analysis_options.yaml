@@ -9,3 +9,6 @@ linter:
     - prefer_single_quotes
     - always_declare_return_types
     - unawaited_futures
+analyzer:
+  exclude:
+    - build/**
