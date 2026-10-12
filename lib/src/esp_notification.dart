@@ -19,17 +19,33 @@ class EspNotification {
     );
   }
 
-  /// Payload of a notification shown through flutter_local_notifications.
+  /// Payload of a notification shown through flutter_local_notifications, or
+  /// `null` when the payload belongs to another notification of the app.
   static EspNotification? fromPayload(String? payload) {
-    if (payload == null || payload.isEmpty) return null;
+    final json = _decodeEspPayload(payload);
+    if (json == null) return null;
+    return EspNotification(
+      messageId: json['message_id'] as String?,
+      title: json['title'] as String?,
+      body: json['body'] as String?,
+      data: (json['data'] as Map<String, dynamic>? ?? {}).map((k, v) => MapEntry(k, v.toString())),
+    );
+  }
+
+  /// Whether a flutter_local_notifications payload was created by ESP.
+  ///
+  /// Apps that show their own local notifications use it to tell ESP taps
+  /// apart from theirs (see [EspPush.handleLocalNotificationTap]).
+  static bool isEspPayload(String? payload) => _decodeEspPayload(payload) != null;
+
+  static Map<String, dynamic>? _decodeEspPayload(String? payload) {
+    if (payload == null || !payload.startsWith('{')) return null;
     try {
-      final json = jsonDecode(payload) as Map<String, dynamic>;
-      return EspNotification(
-        messageId: json['message_id'] as String?,
-        title: json['title'] as String?,
-        body: json['body'] as String?,
-        data: (json['data'] as Map<String, dynamic>? ?? {}).map((k, v) => MapEntry(k, v.toString())),
-      );
+      final json = jsonDecode(payload);
+      if (json is! Map<String, dynamic>) return null;
+      // `esp` marks payloads since 0.2.0; 0.1.0 payloads have message_id + data.
+      final isEsp = json['esp'] == 1 || (json.containsKey('message_id') && json['data'] is Map);
+      return isEsp ? json : null;
     } catch (_) {
       return null;
     }
@@ -79,7 +95,7 @@ class EspNotification {
   int get notificationId => dedupKey.hashCode & 0x7fffffff;
 
   /// Encodes the push for a local notification payload ([fromPayload]).
-  String toPayload() => jsonEncode({'message_id': messageId, 'title': title, 'body': body, 'data': data});
+  String toPayload() => jsonEncode({'esp': 1, 'message_id': messageId, 'title': title, 'body': body, 'data': data});
 
   @override
   String toString() => 'EspNotification(id: $messageId, title: $title, body: $body, data: $data)';

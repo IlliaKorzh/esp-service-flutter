@@ -14,7 +14,24 @@ class EspNotificationDisplay {
   final EspConfig config;
   final _plugin = FlutterLocalNotificationsPlugin();
 
-  Future<void> initialize({void Function(EspNotification notification)? onTap}) async {
+  /// With [initializePlugin] `false` the app initializes flutter_local_notifications
+  /// itself and forwards ESP taps; only the channel is created here.
+  Future<void> initialize({void Function(EspNotification notification)? onTap, bool initializePlugin = true}) async {
+    if (initializePlugin) await _initializePlugin(onTap);
+
+    await _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(
+          AndroidNotificationChannel(
+            config.androidChannelId,
+            config.androidChannelName,
+            description: config.androidChannelDescription,
+            importance: Importance.high,
+          ),
+        );
+  }
+
+  Future<void> _initializePlugin(void Function(EspNotification notification)? onTap) async {
     await _plugin.initialize(
       settings: InitializationSettings(
         android: AndroidInitializationSettings(config.androidNotificationIcon),
@@ -31,17 +48,6 @@ class EspNotificationDisplay {
               if (notification != null) onTap(notification);
             },
     );
-
-    await _plugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(
-          AndroidNotificationChannel(
-            config.androidChannelId,
-            config.androidChannelName,
-            description: config.androidChannelDescription,
-            importance: Importance.high,
-          ),
-        );
   }
 
   /// The notification that cold-started the app, if it was one of ours.
@@ -63,6 +69,7 @@ class EspNotificationDisplay {
           channelDescription: config.androidChannelDescription,
           importance: Importance.high,
           priority: Priority.high,
+          icon: config.androidNotificationIcon,
           styleInformation: BigTextStyleInformation(notification.body ?? ''),
         ),
         iOS: const DarwinNotificationDetails(presentAlert: true, presentBadge: true, presentSound: true),

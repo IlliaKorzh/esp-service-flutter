@@ -33,7 +33,7 @@ class EspPush {
   static final EspPush instance = EspPush._();
 
   /// Sent as `attributes.sdk_version`. Keep in sync with pubspec.yaml.
-  static const sdkVersion = '0.1.0';
+  static const sdkVersion = '0.2.0';
 
   /// Whether ESP push works on this platform.
   static bool get isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -61,7 +61,17 @@ class EspPush {
 
   /// Call once after `Firebase.initializeApp()`. Registration runs in the
   /// background and does not delay app start.
-  Future<void> initialize(EspConfig config, {bool registerBackgroundHandler = true}) async {
+  ///
+  /// flutter_local_notifications has one tap callback per app, and the last
+  /// `initialize` call wins. If the app shows its own local notifications
+  /// (reminders, scheduled pushes), pass `handleLocalNotificationTaps: false`,
+  /// initialize the plugin in the app and forward taps with
+  /// [handleLocalNotificationTap].
+  Future<void> initialize(
+    EspConfig config, {
+    bool registerBackgroundHandler = true,
+    bool handleLocalNotificationTaps = true,
+  }) async {
     if (_config != null) return;
     if (!isSupported) {
       if (config.debug) debugPrint('[ESP] ${defaultTargetPlatform.name} is not supported yet, ESP push is off');
@@ -81,7 +91,7 @@ class EspPush {
     }
 
     _display = EspNotificationDisplay(config);
-    await _display.initialize(onTap: _onOpened);
+    await _display.initialize(onTap: _onOpened, initializePlugin: handleLocalNotificationTaps);
 
     FirebaseMessaging.onMessage.listen(_onForegroundMessage);
     FirebaseMessaging.onMessageOpenedApp.listen((m) => _onOpened(EspNotification.fromRemoteMessage(m)));
@@ -89,8 +99,10 @@ class EspPush {
 
     final initialMessage = await _messaging.getInitialMessage();
     if (initialMessage != null) _onOpened(EspNotification.fromRemoteMessage(initialMessage));
-    final launchNotification = await _display.launchNotification();
-    if (launchNotification != null) _onOpened(launchNotification);
+    if (handleLocalNotificationTaps) {
+      final launchNotification = await _display.launchNotification();
+      if (launchNotification != null) _onOpened(launchNotification);
+    }
 
     AppLifecycleListener(onResume: _onResume);
 
@@ -115,6 +127,21 @@ class EspPush {
     final pending = List.of(_pendingOpened);
     _pendingOpened.clear();
     pending.forEach(handler);
+  }
+
+  /// Handles a tap on a local notification shown by ESP (a push that arrived
+  /// while the app was open). Returns `false` when [payload] belongs to another
+  /// notification of the app, which the app then handles as before.
+  ///
+  /// Needed only with `handleLocalNotificationTaps: false`: call it first in the
+  /// app's `onDidReceiveNotificationResponse` and with the payload of
+  /// `getNotificationAppLaunchDetails()`.
+  bool handleLocalNotificationTap(String? payload) {
+    if (!isInitialized) return false;
+    final notification = EspNotification.fromPayload(payload);
+    if (notification == null) return false;
+    _onOpened(notification);
+    return true;
   }
 
   /// Id of the person in your product. `null` returns to the installation id.

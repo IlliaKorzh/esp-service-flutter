@@ -50,7 +50,7 @@ shared repositories anyway, see step 4.
 
 ```yaml
 dependencies:
-  esp_service: ^0.1.0
+  esp_service: ^0.2.0
   firebase_core: ^4.13.0
 ```
 
@@ -165,6 +165,36 @@ EspPush.instance.subscriberId.addListener(() {
 Only one FCM background handler can exist in an app. The package registers its
 own; if you need yours, pass `registerBackgroundHandler: false` and call
 `EspPush.handleBackgroundMessage(message)` from your handler.
+
+## Apps that already use flutter_local_notifications
+
+flutter_local_notifications keeps **one** tap callback per app: the last
+`initialize` call wins. If the app shows its own local notifications
+(reminders, scheduled pushes), let the app own the plugin and forward ESP taps:
+
+```dart
+await EspPush.instance.initialize(config, handleLocalNotificationTaps: false);
+
+// The app's own setup, as before:
+await plugin.initialize(
+  settings: settings,
+  onDidReceiveNotificationResponse: (response) {
+    if (EspPush.instance.handleLocalNotificationTap(response.payload)) return;
+    // ...the app's own taps, unchanged
+  },
+);
+
+final launch = await plugin.getNotificationAppLaunchDetails();
+if (launch?.didNotificationLaunchApp ?? false) {
+  final payload = launch!.notificationResponse?.payload;
+  if (!EspPush.instance.handleLocalNotificationTap(payload)) {
+    // ...the app's own cold-start tap, unchanged
+  }
+}
+```
+
+ESP still creates its channel and shows foreground pushes; the plugin must be
+initialized by the app at startup, before the first push can arrive.
 
 ## Push payload
 

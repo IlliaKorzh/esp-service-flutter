@@ -56,4 +56,16 @@ void main() {
     expect(EspNotification.fromPayload(null), isNull);
     expect(EspNotification.fromPayload('not json'), isNull);
   });
+
+  test('ESP payloads are told apart from other local notifications of the app', () {
+    const push = EspNotification(messageId: '0:1', data: {'esp_delivery_id': '5'});
+
+    expect(EspNotification.isEspPayload(push.toPayload()), isTrue);
+    expect(EspNotification.isEspPayload('{"message_id":"0:1","data":{}}'), isTrue, reason: '0.1.0 payload');
+    expect(EspNotification.isEspPayload('external_url::https://example.com'), isFalse);
+    expect(EspNotification.isEspPayload('webview'), isFalse);
+    expect(EspNotification.isEspPayload('{"url":"https://example.com"}'), isFalse);
+    expect(EspNotification.isEspPayload('[1,2]'), isFalse);
+    expect(EspNotification.fromPayload('{"url":"https://example.com"}'), isNull);
+  });
 }

@@ -1,3 +1,13 @@
+## 0.2.0
+
+- Works next to the app's own flutter_local_notifications setup (reminders,
+  scheduled pushes): `initialize(..., handleLocalNotificationTaps: false)` keeps
+  the app's tap callback, and `EspPush.instance.handleLocalNotificationTap(payload)`
+  hands ESP taps over. Before, whichever `initialize` ran last took all taps.
+- `EspNotification.isEspPayload(payload)` tells ESP notifications apart.
+- Foreground notifications use `EspConfig.androidNotificationIcon` even when the
+  app initialized the plugin with another icon.
+
 ## 0.1.0
 
 First release. **Android only** — on iOS and other platforms every call is a no-op.
