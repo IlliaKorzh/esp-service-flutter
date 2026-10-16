@@ -22,6 +22,15 @@ abstract final class EspDevice {
     }
   }
 
+  /// When the app was installed on this device (reinstall resets it).
+  static Future<DateTime?> installedAt() async {
+    try {
+      return (await PackageInfo.fromPlatform()).installTime;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Recommended `attributes` keys from the API docs (except `sdk_version`).
   static Future<Map<String, Object?>> attributes() async {
     final attributes = <String, Object?>{'language': PlatformDispatcher.instance.locale.languageCode};

@@ -3,7 +3,7 @@ description: >-
   Flutter client of ESP (Email & Push Service): registers the device's FCM
   token, shows push notifications and reports delivery and taps.
   Android only for now; iOS is planned.
-version: 0.2.0
+version: 0.3.0
 repository: https://github.com/IlliaKorzh/esp-service-flutter
 issue_tracker: https://github.com/IlliaKorzh/esp-service-flutter/issues
 topics:

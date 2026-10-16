@@ -23,6 +23,9 @@ class EspStorage {
   static const _permission = 'esp_permission';
   static const _tags = 'esp_tags';
   static const _pendingEvents = 'esp_pending_events';
+  static const _firstSessionAt = 'esp_first_session_at';
+  static const _lastSessionAt = 'esp_last_session_at';
+  static const _sessionCount = 'esp_session_count';
 
   static const _maxPendingEvents = 100;
 
@@ -77,6 +80,31 @@ class EspStorage {
 
   Future<void> saveTags(Map<String, Object?> tags) => _prefs.setString(_tags, jsonEncode(tags));
 
+  /// Counts a new session. The first one falls back to [installedAt] when it is
+  /// earlier, so apps that update to this version keep their real start date.
+  Future<void> startSession(DateTime now, {DateTime? installedAt}) async {
+    if (_prefs.getString(_firstSessionAt) == null) {
+      final first = installedAt != null && installedAt.isBefore(now) ? installedAt : now;
+      await _prefs.setString(_firstSessionAt, _timestamp(first));
+    }
+    await _prefs.setString(_lastSessionAt, _timestamp(now));
+    await _prefs.setInt(_sessionCount, sessionCount + 1);
+  }
+
+  int get sessionCount => _prefs.getInt(_sessionCount) ?? 0;
+
+  /// `first_session_at`, `last_session_at` and `session_count`
+  /// for `attributes`; empty until the first session.
+  Map<String, Object?> get sessionAttributes {
+    final first = _prefs.getString(_firstSessionAt);
+    if (first == null) return {};
+    return {
+      'first_session_at': first,
+      'last_session_at': _prefs.getString(_lastSessionAt),
+      'session_count': sessionCount,
+    };
+  }
+
   List<EspEvent> get pendingEvents {
     final raw = _prefs.getStringList(_pendingEvents) ?? const [];
     return [for (final item in raw) ?_tryDecodeEvent(item)];
@@ -94,6 +122,9 @@ class EspStorage {
       return null;
     }
   }
+
+  /// ISO 8601 in UTC with whole seconds, e.g. `2026-10-16T09:28:21Z`.
+  static String _timestamp(DateTime time) => '${time.toUtc().toIso8601String().substring(0, 19)}Z';
 
   static String _uuidV4() {
     final random = Random.secure();

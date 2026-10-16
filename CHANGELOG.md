@@ -1,3 +1,12 @@
+## 0.3.0
+
+- Sessions for segments: `attributes` now carry `first_session_at`,
+  `last_session_at` (ISO 8601, UTC) and `session_count`. A session starts on
+  launch or after 30+ seconds in the background, and is registered right away.
+  Apps updating from an earlier version get the install time as their first
+  session. Nothing to change in the app.
+- Built-in attributes can no longer be overridden by `setTags`.
+
 ## 0.2.0
 
 - Works next to the app's own flutter_local_notifications setup (reminders,

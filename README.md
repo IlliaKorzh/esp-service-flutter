@@ -12,13 +12,13 @@ reports delivery and taps back, so campaigns in the ESP dashboard get
 
 ## What it does
 
-- Registers the device in ESP on every launch, on FCM token rotation and when
-  the notification permission changes (also when it is changed in system
-  settings while the app was in the background).
+- Registers the device in ESP on every session start, on FCM token rotation
+  and when the notification permission changes (also when it is changed in
+  system settings while the app was in the background).
 - Sends a stable `device_id` (ANDROID_ID), so token rotation and reinstall do
   not create duplicate subscribers.
-- Sends device attributes for segments: app and OS version, device model,
-  language, timezone, SDK version, plus your own tags.
+- Sends device and session attributes for segments, with no code in the app
+  (see [Attributes](#attributes)), plus your own tags.
 - Shows pushes while the app is in the foreground (FCM does not) and
   `data`-only pushes in the background.
 - Reports `delivered` and `clicked` for every campaign push; events are kept
@@ -195,6 +195,28 @@ if (launch?.didNotificationLaunchApp ?? false) {
 
 ESP still creates its channel and shows foreground pushes; the plugin must be
 initialized by the app at startup, before the first push can arrive.
+
+## Attributes
+
+Sent in `attributes` with every registration. Nothing to set up in the app.
+
+| key | example | meaning |
+|---|---|---|
+| `first_session_at` | `2026-10-01T09:00:00Z` | first session (UTC). For apps that update to 0.3.0 it is the install time |
+| `last_session_at` | `2026-10-16T18:30:00Z` | start of the current session (UTC) |
+| `session_count` | `12` | sessions so far |
+| `language` | `uk` | system language |
+| `timezone` | `Europe/Kyiv` | IANA time zone |
+| `app_version` / `app_build` | `2.3.2` / `41` | app version and build number |
+| `os_version` | `14` | Android version |
+| `device_model` / `device_manufacturer` | `Pixel 8` / `Google` | device |
+| `sdk_version` | `0.3.0` | version of this package |
+
+A session starts when the app is launched or comes back after at least 30
+seconds in the background (`EspPush.sessionTimeout`); each new session is
+registered right away. Pushes handled in the background do not start one.
+Country and device type are not sent: ESP gets them from the request IP and
+the application. Tags from `setTags` cannot override these keys.
 
 ## Push payload
 

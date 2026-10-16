@@ -33,7 +33,10 @@ class EspPush {
   static final EspPush instance = EspPush._();
 
   /// Sent as `attributes.sdk_version`. Keep in sync with pubspec.yaml.
-  static const sdkVersion = '0.2.0';
+  static const sdkVersion = '0.3.0';
+
+  /// Back from the background after at least this long counts as a new session.
+  static const sessionTimeout = Duration(seconds: 30);
 
   /// Whether ESP push works on this platform.
   static bool get isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -55,6 +58,7 @@ class EspPush {
 
   Future<void>? _registration;
   bool _registerAgain = false;
+  DateTime? _pausedAt;
 
   /// Whether [initialize] has completed on a supported platform.
   bool get isInitialized => _config != null;
@@ -85,6 +89,8 @@ class EspPush {
     await _storage.saveConfig(config);
     _api = EspApi(config);
     subscriberId.value = _storage.subscriberId;
+    final firstLaunch = _storage.sessionCount == 0;
+    await _storage.startSession(DateTime.now(), installedAt: firstLaunch ? await EspDevice.installedAt() : null);
 
     if (registerBackgroundHandler) {
       FirebaseMessaging.onBackgroundMessage(espFirebaseBackgroundHandler);
@@ -104,7 +110,7 @@ class EspPush {
       if (launchNotification != null) _onOpened(launchNotification);
     }
 
-    AppLifecycleListener(onResume: _onResume);
+    AppLifecycleListener(onPause: () => _pausedAt = DateTime.now(), onResume: _onResume);
 
     unawaited(register());
     unawaited(_flushPendingEvents());
@@ -160,7 +166,7 @@ class EspPush {
   }
 
   /// Sends the current token, permission and attributes to ESP. Called on every
-  /// launch, on token rotation and when the permission changes.
+  /// session start, on token rotation and when the permission changes.
   Future<void> register() {
     if (!isInitialized) return Future.value();
     final running = _registration;
@@ -190,7 +196,13 @@ class EspPush {
         'token': token,
         'external_id': _storage.externalId,
         'permission': permission,
-        'attributes': {...await EspDevice.attributes(), 'sdk_version': sdkVersion, ..._storage.tags},
+        // Built-in keys win over tags of the same name: segments rely on them.
+        'attributes': {
+          ..._storage.tags,
+          ...await EspDevice.attributes(),
+          ..._storage.sessionAttributes,
+          'sdk_version': sdkVersion,
+        },
       };
       _log('register → ${{...body, 'token': '${token.substring(0, 12)}…'}}');
 
@@ -204,6 +216,13 @@ class EspPush {
   }
 
   Future<void> _onResume() async {
+    final pausedAt = _pausedAt;
+    _pausedAt = null;
+    if (pausedAt != null && DateTime.now().difference(pausedAt) >= sessionTimeout) {
+      await _storage.startSession(DateTime.now());
+      await register();
+      return;
+    }
     // The user may have toggled notifications in system settings.
     if (await _currentPermission() != _storage.permission) await register();
   }
