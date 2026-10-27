@@ -2,11 +2,13 @@ import 'dart:convert';
 
 import 'package:firebase_messaging/firebase_messaging.dart';
 
-/// A push as the app sees it, whether FCM delivered it as a `notification`
-/// or a `data`-only message.
+/// A push as the app sees it: an FCM `notification` or `data`-only message on
+/// Android, an APNs notification on iOS.
 class EspNotification {
-  /// Creates a notification; normally built by the package from FCM.
-  const EspNotification({this.messageId, this.title, this.body, this.data = const {}});
+  /// Creates a notification; normally built by the package from FCM or APNs.
+  const EspNotification({this.messageId, this.title, this.body, this.data = const {}}) : _fromApns = false;
+
+  const EspNotification._apns({this.messageId, this.title, this.body, required this.data}) : _fromApns = true;
 
   /// Reads title, body and data of an FCM message.
   factory EspNotification.fromRemoteMessage(RemoteMessage message) {
@@ -17,6 +19,51 @@ class EspNotification {
       body: message.notification?.body ?? data['body'] ?? data['message'],
       data: data,
     );
+  }
+
+  /// Reads an APNs push from the `userInfo` of an iOS notification.
+  ///
+  /// Title and body come from `aps.alert` (a string is the body), [data] from
+  /// every top-level key except `aps`, merged with a nested `data` dictionary
+  /// when there is one (its values win). Values are strings; nested objects
+  /// are JSON-encoded. [messageId] is the identifier of the notification request.
+  factory EspNotification.fromApns(Map<Object?, Object?> userInfo, {String? messageId}) {
+    final data = <String, String>{};
+    final nested = userInfo['data'];
+    for (final entry in userInfo.entries) {
+      if (entry.key == 'aps' || (entry.key == 'data' && nested is Map)) continue;
+      data['${entry.key}'] = _stringify(entry.value);
+    }
+    if (nested is Map) {
+      for (final entry in nested.entries) {
+        data['${entry.key}'] = _stringify(entry.value);
+      }
+    }
+
+    String? title;
+    String? body;
+    final aps = userInfo['aps'];
+    final alert = aps is Map ? aps['alert'] : null;
+    if (alert is String) {
+      body = alert;
+    } else if (alert is Map) {
+      title = alert['title']?.toString();
+      body = alert['body']?.toString();
+    }
+    return EspNotification._apns(
+      messageId: messageId,
+      title: title ?? data['title'],
+      body: body ?? data['body'] ?? data['message'],
+      data: data,
+    );
+  }
+
+  /// Whether an APNs `userInfo` belongs to an ESP push: `esp_delivery_id`,
+  /// `esp_campaign_id` or `esp_test` at the top level or inside `data`.
+  static bool isEspApns(Map<Object?, Object?> userInfo) {
+    const keys = ['esp_delivery_id', 'esp_campaign_id', 'esp_test'];
+    final nested = userInfo['data'];
+    return keys.any(userInfo.containsKey) || (nested is Map && keys.any(nested.containsKey));
   }
 
   /// Payload of a notification shown through flutter_local_notifications, or
@@ -51,16 +98,20 @@ class EspNotification {
     }
   }
 
-  /// FCM message id.
+  /// FCM message id on Android, notification request identifier on iOS.
   final String? messageId;
 
-  /// Title from `notification.title` or `data.title`.
+  /// Title from `notification.title` (`aps.alert.title` on iOS) or `data.title`.
   final String? title;
 
-  /// Text from `notification.body`, `data.body` or `data.message`.
+  /// Text from `notification.body` (`aps.alert` on iOS), `data.body` or `data.message`.
   final String? body;
 
-  /// FCM `data` of the push, values as strings.
+  /// APNs request identifiers can repeat (`apns-collapse-id`), so iOS pushes
+  /// are de-duplicated by delivery id first.
+  final bool _fromApns;
+
+  /// Custom data of the push (FCM `data`, or APNs keys besides `aps`), values as strings.
   final Map<String, String> data;
 
   /// Sent back with `delivered` / `clicked` events. Opaque, do not parse.
@@ -89,7 +140,9 @@ class EspNotification {
   }
 
   /// Key for de-duplicating the same push reported by several callbacks.
-  String get dedupKey => messageId ?? deliveryId ?? '${title ?? ''}|${body ?? ''}|$data';
+  String get dedupKey => _fromApns ? deliveryId ?? messageId ?? _contentKey : messageId ?? deliveryId ?? _contentKey;
+
+  String get _contentKey => '${title ?? ''}|${body ?? ''}|$data';
 
   /// Id for the local notification that shows this push.
   int get notificationId => dedupKey.hashCode & 0x7fffffff;
@@ -99,6 +152,13 @@ class EspNotification {
 
   @override
   String toString() => 'EspNotification(id: $messageId, title: $title, body: $body, data: $data)';
+
+  static String _stringify(Object? value) => switch (value) {
+    null => '',
+    String() => value,
+    Map() || List() => jsonEncode(value),
+    _ => value.toString(),
+  };
 
   static bool _isHttp(String? value) {
     final v = value?.trim() ?? '';

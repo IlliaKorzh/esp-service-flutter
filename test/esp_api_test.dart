@@ -35,6 +35,22 @@ void main() {
     expect(subscriber.status, 'active');
   });
 
+  test('iOS sends its own application key', () async {
+    late http.Request sent;
+    final api = EspApi(
+      const EspConfig(publicKey: 'pk_android', baseUrl: 'https://esp.example.com', iosPublicKey: 'pk_ios'),
+      applicationKey: 'pk_ios',
+      client: MockClient((request) async {
+        sent = request;
+        return http.Response('', 202);
+      }),
+    );
+
+    await api.sendEvent(EspEvent(deliveryId: '1', type: EspEventType.clicked));
+
+    expect(sent.headers['X-Application-Key'], 'pk_ios');
+  });
+
   test('sendEvent posts delivery id, event and UTC time', () async {
     late http.Request sent;
     final api = EspApi(

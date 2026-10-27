@@ -50,12 +50,16 @@ abstract final class EspDevice {
       } else if (Platform.isIOS) {
         final ios = await DeviceInfoPlugin().iosInfo;
         attributes['os_version'] = ios.systemVersion;
-        attributes['device_model'] = ios.utsname.machine;
+        // `iPhone 16 Pro`; the hardware id (`iPhone17,1`) when the name is unknown.
+        attributes['device_model'] = ios.modelName.isNotEmpty ? ios.modelName : ios.utsname.machine;
+        attributes['device_manufacturer'] = 'Apple';
       }
     } catch (_) {}
 
     try {
-      attributes['timezone'] = (await FlutterTimezone.getLocalTimezone()).identifier;
+      // flutter_timezone 4.x returns the IANA id as a String, 5.x a TimezoneInfo.
+      final Object zone = await FlutterTimezone.getLocalTimezone();
+      attributes['timezone'] = zone is String ? zone : (zone as dynamic).identifier as String;
     } catch (_) {}
 
     return attributes;

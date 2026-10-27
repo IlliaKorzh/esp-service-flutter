@@ -3,11 +3,13 @@
 /// Stored in SharedPreferences on [EspPush.initialize], so the background
 /// isolate (which has no access to app memory) can send delivery events.
 class EspConfig {
-  /// [publicKey] and [baseUrl] come from the application card in the ESP
-  /// dashboard. Pass them with `--dart-define` instead of committing them.
+  /// [publicKey], [iosPublicKey] and [baseUrl] come from the application cards
+  /// in the ESP dashboard. Pass them with `--dart-define` instead of committing
+  /// them.
   const EspConfig({
     required this.publicKey,
     required this.baseUrl,
+    this.iosPublicKey,
     this.androidChannelId = 'esp_notifications',
     this.androidChannelName = 'Notifications',
     this.androidChannelDescription = '',
@@ -16,11 +18,18 @@ class EspConfig {
     this.requestTimeout = const Duration(seconds: 15),
   });
 
-  /// `pk_live_...` from the application card in the ESP dashboard.
+  /// `pk_live_...` of the **Android** application in the ESP dashboard.
   ///
   /// Not a secret (it ships inside the APK and can only write this device's
-  /// own data), but still one key per application.
+  /// own data), but still one key per application. ESP tells platforms apart
+  /// by the key, so iOS uses [iosPublicKey]. An iOS-only app may pass `''`.
   final String publicKey;
+
+  /// `pk_live_...` of the **iOS** application in the ESP dashboard.
+  ///
+  /// ESP push is off on iOS while this is `null` or empty: every call is a
+  /// no-op there, as before 0.4.0.
+  final String? iosPublicKey;
 
   /// Root of the ESP server, e.g. `https://esp.example.com`, without `/api`.
   final String baseUrl;
@@ -49,9 +58,19 @@ class EspConfig {
   /// [baseUrl] without a trailing slash.
   String get normalizedBaseUrl => baseUrl.endsWith('/') ? baseUrl.substring(0, baseUrl.length - 1) : baseUrl;
 
-  /// Why this config cannot be used, or `null` when it is valid.
+  /// Why this config cannot be used on Android, or `null` when it is valid.
   String? validate() {
     if (publicKey.trim().isEmpty) return 'publicKey is empty';
+    return _validateBaseUrl();
+  }
+
+  /// Why this config cannot be used on iOS, or `null` when it is valid.
+  String? validateIos() {
+    if (iosPublicKey?.trim().isEmpty ?? true) return 'iosPublicKey is empty';
+    return _validateBaseUrl();
+  }
+
+  String? _validateBaseUrl() {
     final uri = Uri.tryParse(baseUrl);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) return 'baseUrl is not an absolute URL: "$baseUrl"';
     final isLocal = uri.host == 'localhost' || uri.host == '127.0.0.1' || uri.host == '10.0.2.2';
@@ -65,6 +84,7 @@ class EspConfig {
   Map<String, Object?> toJson() => {
     'public_key': publicKey,
     'base_url': baseUrl,
+    'ios_public_key': iosPublicKey,
     'android_channel_id': androidChannelId,
     'android_channel_name': androidChannelName,
     'android_channel_description': androidChannelDescription,
@@ -77,6 +97,7 @@ class EspConfig {
   factory EspConfig.fromJson(Map<String, Object?> json) => EspConfig(
     publicKey: json['public_key'] as String,
     baseUrl: json['base_url'] as String,
+    iosPublicKey: json['ios_public_key'] as String?,
     androidChannelId: json['android_channel_id'] as String? ?? 'esp_notifications',
     androidChannelName: json['android_channel_name'] as String? ?? 'Notifications',
     androidChannelDescription: json['android_channel_description'] as String? ?? '',

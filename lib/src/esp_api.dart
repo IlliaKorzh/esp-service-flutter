@@ -10,9 +10,16 @@ import 'esp_config.dart';
 
 /// Thin client for the ESP Public API (`/api/public/v1`).
 class EspApi {
-  EspApi(this.config, {http.Client? client}) : _client = client ?? http.Client();
+  EspApi(this.config, {String? applicationKey, http.Client? client})
+    : applicationKey = applicationKey ?? config.publicKey,
+      _client = client ?? http.Client();
 
   final EspConfig config;
+
+  /// `X-Application-Key`: [EspConfig.publicKey] on Android,
+  /// [EspConfig.iosPublicKey] on iOS.
+  final String applicationKey;
+
   final http.Client _client;
 
   /// `POST /subscribers` — upsert of this device's push token.
@@ -36,7 +43,7 @@ class EspApi {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
-              'X-Application-Key': config.publicKey,
+              'X-Application-Key': applicationKey,
             },
             body: jsonEncode(body),
           )

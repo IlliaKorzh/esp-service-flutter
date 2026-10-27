@@ -6,26 +6,31 @@ import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'esp_api.dart';
+import 'esp_apns_transport.dart';
 import 'esp_config.dart';
 import 'esp_device.dart';
+import 'esp_fcm_transport.dart';
 import 'esp_notification.dart';
 import 'esp_notification_display.dart';
 import 'esp_storage.dart';
+import 'esp_transport.dart';
 
 /// Receives a push the user tapped.
 typedef EspNotificationHandler = void Function(EspNotification notification);
 
-/// FCM background handler. Registered by [EspPush.initialize]; if the app needs
-/// its own handler, pass `registerBackgroundHandler: false` and call
+/// FCM background handler (Android). Registered by [EspPush.initialize]; if the
+/// app needs its own handler, pass `registerBackgroundHandler: false` and call
 /// [EspPush.handleBackgroundMessage] from it.
 @pragma('vm:entry-point')
 Future<void> espFirebaseBackgroundHandler(RemoteMessage message) => EspPush.handleBackgroundMessage(message);
 
-/// Client of the ESP push system: registers the FCM token of this device in
-/// ESP, shows incoming pushes and reports `delivered` / `clicked` back.
+/// Client of the ESP push system: registers the push token of this device in
+/// ESP (FCM on Android, APNs on iOS), shows incoming pushes and reports
+/// `delivered` / `clicked` back.
 ///
-/// Android only for now. On other platforms every call is a no-op, so the
-/// same code can stay in a cross-platform app.
+/// Android and iOS. On iOS ESP is off (every call is a no-op) until
+/// [EspConfig.iosPublicKey] is set; on other platforms every call is a no-op,
+/// so the same code can stay in a cross-platform app.
 class EspPush {
   EspPush._();
 
@@ -33,20 +38,20 @@ class EspPush {
   static final EspPush instance = EspPush._();
 
   /// Sent as `attributes.sdk_version`. Keep in sync with pubspec.yaml.
-  static const sdkVersion = '0.3.0';
+  static const sdkVersion = '0.4.0';
 
   /// Back from the background after at least this long counts as a new session.
   static const sessionTimeout = Duration(seconds: 30);
 
   /// Whether ESP push works on this platform.
-  static bool get isSupported => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  static bool get isSupported => _isAndroid || (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS);
 
-  FirebaseMessaging get _messaging => FirebaseMessaging.instance;
+  static bool get _isAndroid => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   EspConfig? _config;
   late EspStorage _storage;
   late EspApi _api;
-  late EspNotificationDisplay _display;
+  late EspTransport _transport;
 
   /// ESP subscriber id of this device; `null` until the first successful
   /// registration. Kept between launches.
@@ -60,17 +65,23 @@ class EspPush {
   bool _registerAgain = false;
   DateTime? _pausedAt;
 
-  /// Whether [initialize] has completed on a supported platform.
+  /// Whether [initialize] has completed on a supported platform (on iOS: with
+  /// an [EspConfig.iosPublicKey]).
   bool get isInitialized => _config != null;
 
-  /// Call once after `Firebase.initializeApp()`. Registration runs in the
-  /// background and does not delay app start.
+  /// Call once at startup (on Android after `Firebase.initializeApp()`).
+  /// Registration runs in the background and does not delay app start.
   ///
-  /// flutter_local_notifications has one tap callback per app, and the last
-  /// `initialize` call wins. If the app shows its own local notifications
-  /// (reminders, scheduled pushes), pass `handleLocalNotificationTaps: false`,
-  /// initialize the plugin in the app and forward taps with
-  /// [handleLocalNotificationTap].
+  /// Android only: flutter_local_notifications has one tap callback per app,
+  /// and the last `initialize` call wins. If the app shows its own local
+  /// notifications (reminders, scheduled pushes), pass
+  /// `handleLocalNotificationTaps: false`, initialize the plugin in the app and
+  /// forward taps with [handleLocalNotificationTap]. On iOS ESP uses neither
+  /// firebase_messaging nor flutter_local_notifications, and both flags are
+  /// ignored.
+  ///
+  /// On iOS this is a no-op without [EspConfig.iosPublicKey]: ESP keys are per
+  /// platform, and the Android [EspConfig.publicKey] is never sent from iOS.
   Future<void> initialize(
     EspConfig config, {
     bool registerBackgroundHandler = true,
@@ -81,34 +92,33 @@ class EspPush {
       if (config.debug) debugPrint('[ESP] ${defaultTargetPlatform.name} is not supported yet, ESP push is off');
       return;
     }
-    final problem = config.validate();
+    final applicationKey = _isAndroid ? config.publicKey : config.iosPublicKey;
+    if (!_isAndroid && (applicationKey?.trim().isEmpty ?? true)) {
+      if (config.debug) debugPrint('[ESP] EspConfig.iosPublicKey is not set, ESP push is off on iOS');
+      // Forgets an earlier opt-in, so the plugin leaves the notification center alone again.
+      unawaited(EspApnsTransport.disable());
+      return;
+    }
+    final problem = _isAndroid ? config.validate() : config.validateIos();
     if (problem != null) throw ArgumentError('Invalid EspConfig: $problem');
     _config = config;
 
     _storage = EspStorage(await SharedPreferences.getInstance());
     await _storage.saveConfig(config);
-    _api = EspApi(config);
+    _api = EspApi(config, applicationKey: applicationKey);
     subscriberId.value = _storage.subscriberId;
     final firstLaunch = _storage.sessionCount == 0;
     await _storage.startSession(DateTime.now(), installedAt: firstLaunch ? await EspDevice.installedAt() : null);
 
-    if (registerBackgroundHandler) {
-      FirebaseMessaging.onBackgroundMessage(espFirebaseBackgroundHandler);
-    }
-
-    _display = EspNotificationDisplay(config);
-    await _display.initialize(onTap: _onOpened, initializePlugin: handleLocalNotificationTaps);
-
-    FirebaseMessaging.onMessage.listen(_onForegroundMessage);
-    FirebaseMessaging.onMessageOpenedApp.listen((m) => _onOpened(EspNotification.fromRemoteMessage(m)));
-    _messaging.onTokenRefresh.listen((_) => register());
-
-    final initialMessage = await _messaging.getInitialMessage();
-    if (initialMessage != null) _onOpened(EspNotification.fromRemoteMessage(initialMessage));
-    if (handleLocalNotificationTaps) {
-      final launchNotification = await _display.launchNotification();
-      if (launchNotification != null) _onOpened(launchNotification);
-    }
+    _transport = _isAndroid
+        ? EspFcmTransport(
+            config,
+            registerBackgroundHandler: registerBackgroundHandler,
+            handleLocalNotificationTaps: handleLocalNotificationTaps,
+            log: _log,
+          )
+        : EspApnsTransport(log: _log, warn: (message) => _warn(config, message));
+    await _transport.initialize(onOpened: _onOpened, onReceived: _onReceived, onTokenChanged: () => register());
 
     AppLifecycleListener(onPause: () => _pausedAt = DateTime.now(), onResume: _onResume);
 
@@ -116,13 +126,13 @@ class EspPush {
     unawaited(_flushPendingEvents());
   }
 
-  /// Asks for the notification permission (Android 13+ shows the system
+  /// Asks for the notification permission (Android 13+ and iOS show the system
   /// dialog) and sends the result to ESP. Returns whether pushes are allowed.
   Future<bool> requestPermission() async {
     if (!isInitialized) return false;
-    final settings = await _messaging.requestPermission();
+    final granted = await _transport.requestPermission();
     await register();
-    return _isGranted(settings.authorizationStatus);
+    return granted;
   }
 
   /// Receives taps on pushes. Taps that happened before the handler was set
@@ -139,9 +149,10 @@ class EspPush {
   /// while the app was open). Returns `false` when [payload] belongs to another
   /// notification of the app, which the app then handles as before.
   ///
-  /// Needed only with `handleLocalNotificationTaps: false`: call it first in the
-  /// app's `onDidReceiveNotificationResponse` and with the payload of
-  /// `getNotificationAppLaunchDetails()`.
+  /// Needed only on Android with `handleLocalNotificationTaps: false`: call it
+  /// first in the app's `onDidReceiveNotificationResponse` and with the payload
+  /// of `getNotificationAppLaunchDetails()`. ESP shows no local notifications on
+  /// iOS, so there it returns `false` for every payload of the app.
   bool handleLocalNotificationTap(String? payload) {
     if (!isInitialized) return false;
     final notification = EspNotification.fromPayload(payload);
@@ -185,12 +196,12 @@ class EspPush {
 
   Future<void> _register() async {
     try {
-      final token = await _messaging.getToken();
+      final token = await _transport.token();
       if (token == null) {
-        _log('FCM token is not available');
+        _log('${_transport.tokenName} token is not available');
         return;
       }
-      final permission = await _currentPermission();
+      final permission = await _transport.permission();
       final body = <String, Object?>{
         'device_id': await EspDevice.id() ?? _storage.installationId,
         'token': token,
@@ -200,6 +211,7 @@ class EspPush {
         'attributes': {
           ..._storage.tags,
           ...await EspDevice.attributes(),
+          ...await _transport.attributes(),
           ..._storage.sessionAttributes,
           'sdk_version': sdkVersion,
         },
@@ -224,15 +236,13 @@ class EspPush {
       return;
     }
     // The user may have toggled notifications in system settings.
-    if (await _currentPermission() != _storage.permission) await register();
+    if (await _transport.permission() != _storage.permission) await register();
   }
 
-  Future<void> _onForegroundMessage(RemoteMessage message) async {
-    final notification = EspNotification.fromRemoteMessage(message);
-    _log('foreground push: $notification');
-    if (notification.hasContent) await _display.show(notification);
-    await _track(_api, _storage, notification, EspEventType.delivered);
-  }
+  /// A push reached the app's code while it was open (the transport has
+  /// already shown it where the platform does not).
+  Future<void> _onReceived(EspNotification notification) =>
+      _track(_api, _storage, notification, EspEventType.delivered);
 
   void _onOpened(EspNotification notification) {
     if (!_handledOpened.add(notification.dedupKey)) return;
@@ -257,17 +267,18 @@ class EspPush {
     }
   }
 
-  Future<String> _currentPermission() async {
-    final settings = await _messaging.getNotificationSettings();
-    return _isGranted(settings.authorizationStatus) ? 'granted' : 'denied';
-  }
-
   void _log(String message) => _logFor(_config, message);
 
-  /// Background isolate: shows `data`-only pushes (FCM shows `notification`
-  /// ones itself) and reports `delivered`.
+  /// A setup problem the developer should see: printed in debug builds even
+  /// without `debug: true`.
+  static void _warn(EspConfig config, String message) {
+    if (kDebugMode || config.debug) debugPrint('[ESP] WARNING: $message');
+  }
+
+  /// Android background isolate: shows `data`-only pushes (FCM shows
+  /// `notification` ones itself) and reports `delivered`. Does nothing on iOS.
   static Future<void> handleBackgroundMessage(RemoteMessage message) async {
-    if (!isSupported) return;
+    if (!_isAndroid) return;
     final storage = EspStorage(await SharedPreferences.getInstance());
     final config = storage.config;
     if (config == null) return;
@@ -303,9 +314,6 @@ class EspPush {
       }
     }
   }
-
-  static bool _isGranted(AuthorizationStatus status) =>
-      status == AuthorizationStatus.authorized || status == AuthorizationStatus.provisional;
 
   static void _logFor(EspConfig? config, String message) {
     if (config?.debug ?? false) debugPrint('[ESP] $message');

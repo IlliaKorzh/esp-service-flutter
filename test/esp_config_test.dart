@@ -26,6 +26,7 @@ void main() {
     const config = EspConfig(
       publicKey: 'pk_test_123',
       baseUrl: 'https://esp.example.com',
+      iosPublicKey: 'pk_live_ios',
       androidChannelId: 'app_notifications',
       androidChannelName: 'App Notifications',
       androidNotificationIcon: '@drawable/ic_notification',
@@ -34,5 +35,27 @@ void main() {
     );
     final restored = EspConfig.fromJson(config.toJson());
     expect(restored.toJson(), config.toJson());
+    expect(restored.iosPublicKey, 'pk_live_ios');
+  });
+
+  test('configs saved by 0.3.0 have no iOS key', () {
+    final json = valid.toJson()..remove('ios_public_key');
+    expect(EspConfig.fromJson(json).iosPublicKey, isNull);
+  });
+
+  test('iOS validates iosPublicKey instead of publicKey', () {
+    expect(valid.validateIos(), contains('iosPublicKey'));
+    expect(
+      const EspConfig(publicKey: '', baseUrl: 'https://esp.example.com', iosPublicKey: 'pk_ios').validateIos(),
+      isNull,
+    );
+    expect(
+      const EspConfig(publicKey: '', baseUrl: 'https://esp.example.com', iosPublicKey: 'pk_ios').validate(),
+      contains('publicKey'),
+    );
+    expect(
+      const EspConfig(publicKey: '', baseUrl: 'http://esp.example.com', iosPublicKey: 'pk_ios').validateIos(),
+      contains('https'),
+    );
   });
 }

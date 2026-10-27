@@ -53,3 +53,7 @@ local.properties
 /example/build/
 /example/.dart_tool/
 /example/pubspec.lock
+
+# Swift Package Manager state of ios/esp_service
+.build/
+.swiftpm/
